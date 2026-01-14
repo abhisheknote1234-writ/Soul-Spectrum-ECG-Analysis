@@ -1,0 +1,12 @@
+void setup() {
+  // High Speed Communication
+  Serial.begin(115200);
+}
+
+void loop() {
+  // Read the Heart Signal
+  int sensorValue = analogRead(A0);
+
+  Serial.println(sensorValue);
+  delay(5); 
+}
