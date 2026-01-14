@@ -113,7 +113,75 @@ The state labels update live:
 * **ORIENTING / DECIDING**
 * **ADAPTING / FLOWING**
 
-This turns raw physiology into **interpretable experience**. fileciteturn0file0
+This turns raw physiology into **interpretable experience**.
+
+---
+
+## How to Run This Project
+
+### Hardware Setup
+
+* ECG sensor connected to Arduino (e.g., AD8232 or equivalent)
+* Correct electrode placement on the chest
+* Arduino connected to laptop via USB
+
+Upload the provided Arduino sketch using **Arduino IDE**.
+
+---
+
+### Software Setup
+
+Make sure you have **Python 3.9+** installed.
+
+Install all required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+### Run Live ECG Monitor
+
+1. Open the Python file for the live ECG monitor
+2. Set the correct serial port (e.g., `COM3` or `/dev/ttyUSB0`)
+3. Run:
+
+```bash
+python Ecg_Heartbeat.py
+```
+
+You should see:
+
+* Live ECG waveform
+* BPM, RR interval, HRV values
+* Real-time state classification
+
+---
+
+### Record a Session
+
+* Press **`r`** to start recording
+* Press **`r`** again to stop
+* Data is saved automatically as a CSV file
+
+---
+
+### Analyze Recorded Data
+
+Use the provided analysis scripts to:
+
+* Plot RR Interval (HRV tachogram)
+* Plot HRV (RMSSD) over time
+* Visualize state transitions during music listening
+
+---
+
+### Notes
+
+* This project is **exploratory**, not a medical diagnostic tool
+* Results depend on electrode placement, noise, and emotional engagement
+* Best results are obtained when the body is still
 
 ---
 
@@ -195,3 +263,37 @@ This proves that:
 > **Emotion is not random — it is regulated, phased, and measurable.**
 
 ---
+
+## What This Project Is (and Is Not)
+
+✔ Not a medical diagnostic tool
+✔ Not just a BPM counter
+✔ Not only about high vs low HRV
+
+It *is*:
+
+* A physiological + emotional interface
+* A live nervous-system mirror
+* A foundation for deeper heart–emotion research
+
+---
+
+## Future Directions
+
+* Deeper state segmentation (micro-orientation)
+* Mapping lyrics timestamps → HRV shifts
+* Color-based HRV visualization
+* Multi-sensor fusion (breathing, motion)
+
+---
+
+## Final Note
+
+This project shows that the heart:
+
+* Adapts before the mind understands
+* Decides before words form
+* Acts when meaning settles
+
+**HRV is not just variability.**
+It is **direction in motion**.
