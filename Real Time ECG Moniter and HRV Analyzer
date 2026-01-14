@@ -1,0 +1,257 @@
+import serial
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib.patches as patches
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.signal import find_peaks
+import threading
+import pandas as pd
+from collections import deque
+
+# --- CONFIGURATION ---
+SERIAL_PORT = 'COM3'    
+BAUD_RATE = 115200
+MAX_HISTORY = 600        
+RECORD_FILE = "C:\\Users\\acer\\Desktop\\ecg_session.csv"
+SMOOTHING_LEVEL = 5     
+
+# --- TUNING KNOBS ---
+PEAK_DISTANCE = 60      
+PEAK_PROMINENCE = 80    
+
+class AnalyticECG:
+    def __init__(self):
+        try:
+            self.ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
+            print(f"Connected to {SERIAL_PORT}...")
+        except:
+            print(f"\nERROR: Could not open {SERIAL_PORT}.")
+            return
+
+        self.data_buffer = deque(maxlen=MAX_HISTORY)
+        self.timestamps = deque(maxlen=MAX_HISTORY)
+        self.is_recording = False
+        self.recorded_rows = []
+        
+        # --- CHANGED: HRV HISTORY TO 5 BEATS ---
+        self.rr_history = deque(maxlen=5) 
+        
+        self.bpm = 0
+        self.hrv_rmssd = 0
+        self.latest_rr = 0 
+        self.last_beat_time = 0
+        self.beat_detected_frame = 0 
+        
+        # --- UI SETUP ---
+        plt.style.use('dark_background')
+        self.fig = plt.figure(figsize=(12, 6))
+        self.fig.patch.set_facecolor('black')
+        
+        gs = self.fig.add_gridspec(1, 2, width_ratios=[4, 1])
+        
+        # --- HELPER: DRAW HUD BOXES ---
+        def draw_hud_box(ax, x, y, w, h, color):
+            rect_outer = patches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02", 
+                                                linewidth=4, edgecolor=color, facecolor='none', 
+                                                transform=ax.transAxes, alpha=0.3, zorder=10)
+            rect_inner = patches.FancyBboxPatch((x+0.005, y+0.01), w-0.01, h-0.02, boxstyle="round,pad=0.02", 
+                                                linewidth=1.5, edgecolor=color, facecolor='none', 
+                                                transform=ax.transAxes, alpha=0.9, zorder=10)
+            ax.add_patch(rect_outer)
+            ax.add_patch(rect_inner)
+
+        # =========================================
+        # 1. THE MAIN GRAPH AREA (Left Panel)
+        # =========================================
+        self.ax_graph = self.fig.add_subplot(gs[0])
+        self.ax_graph.set_facecolor('black')
+        
+        # Boundary Box
+        draw_hud_box(self.ax_graph, 0.00, 0.00, 1.0, 1.0, '#E100FF')
+
+        # --- BACKGROUND GRADIENT ---
+        height_res = 100
+        peak_idx = int(height_res * (4/11)) 
+        part_bottom = np.linspace(0, 1, peak_idx)
+        part_top = np.linspace(1, 0, height_res - peak_idx)
+        gradient_col = np.concatenate((part_bottom, part_top))
+        gradient_data = np.tile(gradient_col[:, np.newaxis], (1, 100))
+        
+        cdict = {'red':   ((0.0, 0.0, 0.0), (1.0, 0.2, 0.2)),
+                 'green': ((0.0, 0.0, 0.0), (1.0, 0.05, 0.05)),
+                 'blue':  ((0.0, 0.0, 0.0), (1.0, 0.25, 0.25))}
+        custom_cmap = LinearSegmentedColormap('AsymGradient', cdict)
+        self.ax_graph.imshow(gradient_data, aspect='auto', extent=[0, MAX_HISTORY, 0, 1024], 
+                             cmap=custom_cmap, zorder=0, alpha=0.9, origin='lower')
+
+        # --- NEON LINES ---
+        self.line_glow, = self.ax_graph.plot([], [], color='#E100FF', linewidth=8, alpha=0.15)
+        self.line, = self.ax_graph.plot([], [], color='#E100FF', linewidth=2) 
+        self.peaks_glow, = self.ax_graph.plot([], [], 'o', color='#FF0000', markersize=15, alpha=0.3)
+        self.peaks_plot, = self.ax_graph.plot([], [], 'o', color='#FF3333', markersize=5) 
+
+        # --- AXIS STYLING ---
+        self.ax_graph.grid(color='#E100FF', linestyle='--', linewidth=0.5, alpha=0.2)
+        self.ax_graph.set_ylim(0, 1024)
+        self.ax_graph.set_xlim(0, MAX_HISTORY)
+        
+        for spine in self.ax_graph.spines.values():
+            spine.set_visible(True)
+            spine.set_color('#E100FF')
+            spine.set_linewidth(1)
+            
+        self.ax_graph.tick_params(axis='x', colors='#E100FF', labelsize=8)
+        self.ax_graph.tick_params(axis='y', colors='#E100FF', labelsize=8)
+        self.ax_graph.set_ylabel("VOLTAGE (mV)", color='#E100FF', fontsize=8, fontweight='bold')
+        self.ax_graph.set_xlabel("SAMPLES (Time)", color='#E100FF', fontsize=8, fontweight='bold')
+        self.ax_graph.set_title(" ECG & HRV LIVE MONITOR ", loc='left', color='#E100FF', fontsize=10, alpha=0.8, pad=10)
+
+        # =========================================
+        # 2. THE VITALS SIDE PANEL (Right Panel)
+        # =========================================
+        self.ax_stats = self.fig.add_subplot(gs[1])
+        self.ax_stats.set_facecolor('black')
+        self.ax_stats.set_xticks([])
+        self.ax_stats.set_yticks([])
+        for spine in self.ax_stats.spines.values(): spine.set_visible(False)
+
+        # BPM Frame (Purple)
+        draw_hud_box(self.ax_stats, 0.05, 0.68, 0.9, 0.25, '#E100FF')
+        self.ax_stats.text(0.1, 0.88, 'HEART RATE', color='#E100FF', fontsize=9, fontweight='bold')
+        self.text_bpm = self.ax_stats.text(0.5, 0.80, '--', color='#E100FF', fontsize=45, fontweight='bold', ha='center', va='center')
+        self.ax_stats.text(0.8, 0.72, 'BPM', color='#E100FF', fontsize=8)
+
+        # --- CHANGED: RR Frame (GREEN) ---
+        draw_hud_box(self.ax_stats, 0.05, 0.43, 0.9, 0.15, '#00FF00') # Box Color Green
+        self.ax_stats.text(0.1, 0.55, 'RR INTERVAL', color='#00FF00', fontsize=9, alpha=0.7) # Text Green
+        self.text_rr = self.ax_stats.text(0.5, 0.50, '--', color='#00FF00', fontsize=20, ha='center', va='center') # Value Green
+        self.ax_stats.text(0.8, 0.45, 'ms', color='#00FF00', fontsize=8, alpha=0.7) # Unit Green
+
+        # HRV Frame (Blue)
+        draw_hud_box(self.ax_stats, 0.05, 0.18, 0.9, 0.15, '#00CCFF')
+        self.ax_stats.text(0.1, 0.30, 'HRV (RMSSD)', color='#00CCFF', fontsize=9, alpha=0.7)
+        self.text_hrv = self.ax_stats.text(0.5, 0.25, '--', color='#00CCFF', fontsize=20, ha='center', va='center')
+        
+        # HRV STATUS
+        self.text_hrv_status = self.ax_stats.text(0.5, 0.20, 'CALCULATING...', color='gray', fontsize=8, fontweight='bold', ha='center', va='center')
+
+        # Heart Icon & Rec
+        self.text_heart = self.ax_stats.text(0.75, 0.90, '❤', color='#FF0000', fontsize=20, alpha=0.2)
+        self.text_rec = self.ax_stats.text(0.1, 0.05, '', color='red', fontsize=14, fontweight='bold')
+
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key)
+        self.thread = threading.Thread(target=self.read_serial)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def read_serial(self):
+        while True:
+            try:
+                if self.ser.in_waiting:
+                    line = self.ser.readline().decode('utf-8').strip()
+                    if line and line.isdigit():
+                        val = int(line)
+                        self.data_buffer.append(val)
+                        self.timestamps.append(time.time())
+            except: pass
+
+    def calculate_hrv(self):
+        if len(self.rr_history) < 2: return 0
+        rr_array = np.array(self.rr_history)
+        diff_rr = np.diff(rr_array)
+        return np.sqrt(np.mean(diff_rr**2))
+
+    def process_data(self):
+        if len(self.data_buffer) < 50: return False, [], []
+        
+        raw = np.array(self.data_buffer)
+        kernel = np.ones(SMOOTHING_LEVEL) / SMOOTHING_LEVEL
+        smoothed_data = np.convolve(raw, kernel, mode='valid')
+        
+        peaks, _ = find_peaks(smoothed_data, distance=PEAK_DISTANCE, prominence=PEAK_PROMINENCE) 
+        
+        beat_found = False
+        if len(peaks) > 1:
+            times = np.array(self.timestamps)[-len(smoothed_data):]
+            peak_times = times[peaks]
+            newest_peak_time = peak_times[-1]
+            
+            if newest_peak_time > self.last_beat_time:
+                beat_found = True
+                rr_interval = (newest_peak_time - self.last_beat_time) * 1000
+                if 300 < rr_interval < 2000 and self.last_beat_time != 0:
+                    self.latest_rr = rr_interval
+                    self.rr_history.append(rr_interval)
+                    self.bpm = 60000 / rr_interval
+                    self.hrv_rmssd = self.calculate_hrv()
+                    
+                    if self.is_recording:
+                        self.recorded_rows.append({
+                            'Time': newest_peak_time, 'BPM': self.bpm,
+                            'RR_ms': self.latest_rr, 'HRV_RMSSD': self.hrv_rmssd
+                        })
+                self.last_beat_time = newest_peak_time
+
+        return beat_found, smoothed_data, peaks
+
+    def update_plot(self, frame):
+        if len(self.data_buffer) > 50:
+            is_beat, smoothed_line, peak_indices = self.process_data()
+            
+            if len(smoothed_line) > 0:
+                x_data = range(len(smoothed_line))
+                self.line.set_data(x_data, smoothed_line)
+                self.line_glow.set_data(x_data, smoothed_line)
+                if len(peak_indices) > 0:
+                    peak_values = smoothed_line[peak_indices]
+                    self.peaks_plot.set_data(peak_indices, peak_values)
+                    self.peaks_glow.set_data(peak_indices, peak_values)
+            
+            self.text_bpm.set_text(f"{self.bpm:.0f}")
+            self.text_rr.set_text(f"{self.latest_rr:.0f}")
+            self.text_hrv.set_text(f"{self.hrv_rmssd:.1f}")
+            
+            # --- HRV STATUS LOGIC ---
+            if self.hrv_rmssd < 25:
+                self.text_hrv_status.set_text("RIGID SYSTEM / INSTINCT")
+                self.text_hrv_status.set_color('#FF0000') # Red
+            elif 25 <= self.hrv_rmssd < 50:
+                self.text_hrv_status.set_text("ORIENTING / DECIDING")
+                self.text_hrv_status.set_color('#FFDD00') # Yellow
+            else:
+                self.text_hrv_status.set_text("ADAPTING / FLOWING")
+                self.text_hrv_status.set_color('#00FF00') # Green
+            
+            if is_beat: self.beat_detected_frame = 5
+            
+            if self.beat_detected_frame > 0:
+                self.text_heart.set_alpha(1.0) 
+                self.beat_detected_frame -= 1
+            else:
+                self.text_heart.set_alpha(0.2) 
+            
+            if self.is_recording: self.text_rec.set_text("● REC")
+            else: self.text_rec.set_text("")
+                
+        return self.line, self.line_glow, self.peaks_plot, self.text_bpm, self.text_heart
+
+    def on_key(self, event):
+        if event.key == 'r':
+            self.is_recording = not self.is_recording
+            if self.is_recording: 
+                self.recorded_rows = []
+                self.rr_history.clear()
+            else: 
+                if self.recorded_rows:
+                    pd.DataFrame(self.recorded_rows).to_csv(RECORD_FILE, index=False)
+                    print(f"Saved to {RECORD_FILE}")
+
+    def start(self):
+        ani = animation.FuncAnimation(self.fig, self.update_plot, interval=20, blit=False)
+        plt.show()
+
+if __name__ == "__main__":
+    app = AnalyticECG()
+    if hasattr(app, 'ser'): app.start()
