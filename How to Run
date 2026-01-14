@@ -1,0 +1,14 @@
+## How to Run
+
+### Hardware setup
+1. Upload Arduino code to your ECG board
+2. Connect ECG leads properly
+3. Make sure serial port and baud rate match
+
+### Software setup
+1. Install Python requirements:
+   `pip install -r requirements.txt`
+2. Run the real-time ECG monitor:
+   `python live_monitor.py`
+3. Run CSV analysis:
+   `python hrv_analysis.py`
