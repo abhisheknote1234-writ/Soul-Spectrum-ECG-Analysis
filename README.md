@@ -2,12 +2,11 @@
 
 ## Overview
 
-This project is a **live ECG & HRV monitoring system** built to explore how the human heart **adapts, orients, decides, and acts** over time — This project is just to give a overview how our body percive things under **emotional and musical stimuli**.
+This project is a **live ECG & HRV monitoring system** built to explore how the human heart **adapts, orients, decides, and acts** over time. 
 
-Rather than treating HRV as just a fitness number, this project treats HRV as a **dynamic language of regulation**.
+This project is just to give a overview how our body perceive things under **emotional and musical stimuli**.
 
-Because real human experience is not binary, it moves through phases.
-And the main part, what these phases actually meant. Do they have a deeper connection with our thoughts? Do they have connections with our actions? Our Body language? Behaviour?
+Rather than treating HRV as just a fitness number, this project treats HRV as a **dynamic language of regulation**. Because real human experience is not binary, it moves through phases. And the main part, what these phases actually meant. Do they have a deeper connection with our thoughts? Do they have connections with our actions? Our Body language? and Behaviour?
 
 To Find this, I built:
 
