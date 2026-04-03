@@ -1,269 +1,158 @@
-# ECG–HRV Orientation Project
+# ECG–HRV Orientation System
 
-## Overview
+##  Overview
 
-This project is a **live ECG & HRV monitoring system** built to explore how the human heart **adapts, orients, decides, and acts** over time. 
+This project is a **real-time ECG + HRV monitoring system** that explores how physiological signals reflect **dynamic emotional and regulatory states**.
 
-This project is just to give a overview how our body perceive things under **emotional and musical stimuli**.
+Unlike traditional HRV tools that only measure “high vs low HRV”, this system models HRV as a **continuous state transition process**.
 
-Rather than treating HRV as just a fitness number, this project treats HRV as a **dynamic language of regulation**. Because real human experience is not binary, it moves through phases. And the main part, what these phases actually meant. Do they have a deeper connection with our thoughts? Do they have connections with our actions? Our Body language? and Behaviour?
+It combines:
 
-To Find this, I built:
-
-* A **real-time ECG live monitor**
-* Beat detection (R-peaks)
+* Real-time ECG acquisition
+* R-peak detection
 * RR interval tracking
-* Short-window HRV (RMSSD)
-* A **state-based interpretation layer** that maps HRV shifts into:
+* HRV computation (RMSSD)
+* State-based interpretation layer
 
-  * **Instinct / Act**
-  * **Orient / Decide**
-  * **Adapt / Flow**
+---
 
-This README explains **what those states mean** and **how my HRV shifted while listening to two songs**, showing how emotion, meaning, and rhythm directly shape heart regulation.
+##  Core Idea
 
-**Why this project exists**
+Instead of asking:
 
-Most HRV tools answer only one question:
-“Is HRV high or low?”
+> “Is HRV high or low?”
 
-This project asks a deeper one:
-**“What phase of regulation is my heart in right now?”**
+This project asks:
 
-## The Three Heart States (Core Model)
+> **“What state of regulation is the system currently in?”**
 
-### Act / Instinct (Low HRV)
-**State:** Action, protection, contraction
+---
 
-* HRV is low and tight
-* System is conserving or bracing
-* Little internal flexibility
+##  System Pipeline
 
-This state appears when:
+```text
+ECG Signal → Preprocessing → R-Peak Detection → RR Intervals → HRV (RMSSD) → State Interpretation
+```
 
-* Lyrics hit emotionally hard
-* A memory is triggered
-* The system commits to a feeling
+---
 
-This is **not bad** — it is **decisive**.
+##  Three Heart States (Model)
 
-### Orient / Decide (Mid HRV)
-**State:** Pause, evaluation, choice
+###  Instinct / Act (Low HRV)
 
-* HRV is moderate and stable
-* Signals from heart and brain are balanced
-* Multiple directions are visible
+* Contraction, protection, commitment
+* Reduced variability
+* Appears during strong emotional impact
 
-This is the **thinking phase**:
+---
 
-* Not reacting
-* Not flowing blindly
-* But *choosing direction*
+###  Orient / Decide (Mid HRV)
 
-This is where awareness lives.
+* Evaluation, awareness, balance
+* Stable HRV
+* Represents decision-making phase
 
-### Adapt / Flow (High HRV)
-**State:** Expansion, openness, emotional flow
+---
 
-* HRV is higher and smooth
-* Nervous system is flexible
-* Heart synchronizes with rhythm and meaning
+###  Adapt / Flow (High HRV)
 
-This appears when:
+* Openness, flexibility, synchronization
+* High and smooth HRV
+* Occurs during positive or flowing emotional states
 
-* Music feels hopeful
-* Lyrics resonate positively
-* Emotion moves freely without resistance
+---
 
-## Live ECG System (What I Built)
-The system:
+##  Features
 
-* Streams ECG data from a sensor (Arduino → Serial)
-* Smooths the signal
-* Detects R-peaks in real time
-* Computes RR intervals
-* Computes **short-window HRV (RMSSD)**
-* Displays:
+* Real-time ECG waveform visualization
+* Robust R-peak detection
+* RR interval tracking
+* HRV computation (RMSSD)
+* Live state classification
+* Session recording and playback
 
-  * ECG waveform
-  * BPM
-  * RR interval (ms)
-  * HRV value
-  * **Current heart state label**
+---
 
-The state labels update live:
+##  Live Output
 
-* **RIGID SYSTEM / INSTINCT**
-* **ORIENTING / DECIDING**
-* **ADAPTING / FLOWING**
+The system displays:
 
-This turns raw physiology into **interpretable experience**.
+* ECG waveform
+* BPM
+* RR interval
+* HRV (RMSSD)
+* Current state:
 
-## How to Run This Project
-### Hardware Setup
+  * INSTINCT
+  * ORIENT
+  * FLOW
 
-* ECG sensor connected to Arduino (e.g., AD8232 or equivalent)
-* Correct electrode placement on the chest
-* Arduino connected to laptop via USB
+---
 
-Upload the provided Arduino sketch using **Arduino IDE**.
+##  Hardware Setup
 
+* ECG sensor (AD8232 or similar)
+* Arduino / ESP32
+* Chest electrode placement
+* Serial communication to PC
 
-### Software Setup
+---
 
-Make sure you have **Python 3.9+** installed.
-Install all required dependencies:
+##  How to Run
 
 ```bash
 pip install -r requirements.txt
-```
-
----
-
-### Run Live ECG Monitor
-
-1. Open the Python file for the live ECG monitor
-2. Set the correct serial port (e.g., `COM3` or `/dev/ttyUSB0`)
-3. Run:
-
-```bash
 python Ecg_Heartbeat.py
 ```
 
-You should see:
+---
 
-* Live ECG waveform
-* BPM, RR interval, HRV values
-* Real-time state classification
+##  Experimental Insight
+
+This system was tested using music as an emotional stimulus.
+
+### Example Observations:
+
+* Emotional intensity → HRV decrease → Instinct state
+* Positive flow → HRV increase → Adapt state
+* Neutral phase → Stable HRV → Orientation state
 
 ---
 
-### Record a Session
+##  Limitations
 
-* Press **`r`** to start recording
-* Press **`r`** again to stop
-* Data is saved automatically as a CSV file
-
-### Analyze Recorded Data
-
-Use the provided analysis scripts to:
-
-* Plot RR Interval (HRV tachogram)
-* Plot HRV (RMSSD) over time
-* Visualize state transitions during music listening
-
-### Notes
-
-* This project is **exploratory**, not a medical diagnostic tool
-* Results depend on electrode placement, noise, and emotional engagement
-* Best results are obtained when the body is stil
-
-
-## Emotional HRV Analysis Using Music
-### Song 1: *Love Is Gone*
-
-**What happened:**
-
-* At the beginning of listening:
-
-  * HRV rises
-  * The system is **adapting** to sound, melody, visuals
-  * Heart is open, receptive, exploratory
-
-This is the **Orient → Adapt phase**.
-
-* As lyrics progress and meaning becomes heavier:
-
-  * HRV drops
-  * RR intervals tighten
-  * The system **contracts**
-
-This marks a shift into **Act / Instinct**.
-
-**Interpretation:**
-The heart first *listens*.
-Then it *understands*.
-Then it *commits emotionally*.
-
-The drop in HRV is not weakness — it is **emotional fixing**.
-The heart takes a stance.
-
-### Song 2: *Welcome to My World*
-**What happened:**
-
-* From early listening:
-
-  * HRV rises smoothly
-  * BPM increases with stability
-  * The heart synchronizes with rhythm
-
-* As lyrics flow with positivity:
-
-  * HRV remains high and stable
-  * No sharp contractions
-  * Emotional expansion continues
-
-**Interpretation:**
-This song did not push the heart into defense.
-It invited it into **hope and openness**.
-
-The heart behaved as if:
-
-> *“Something good is possible again.”*
-
-This is **Adapt / Flow** sustained.
+* Not a medical diagnostic tool
+* Sensitive to noise and electrode placement
+* HRV influenced by multiple factors (activity, breathing, etc.)
 
 ---
 
-## Key Insight of This Project
+##  Future Work
 
-HRV does **not** only measure stress.
-
-It reveals:
-
-* When the heart is **listening**
-* When it is **deciding**
-* When it is **acting**
-
-Music became a **controlled emotional input**.
-HRV became the **output language**.
-
-This proves that:
-
-> **Emotion is not random — it is regulated, phased, and measurable.**
+* Multi-sensor fusion (PPG, respiration)
+* Real-time wearable integration
+* Emotion-pattern modeling
+* Color-based visualization system
 
 ---
 
-## What This Project Is (and Is Not)
+##  Key Insight
 
-✔ Not a medical diagnostic tool
-✔ Not just a BPM counter
-✔ Not only about high vs low HRV
-
-It *is*:
-
-* A physiological + emotional interface
-* A live nervous-system mirror
-* A foundation for deeper heart–emotion research
+> HRV is not just variability.
+> It reflects **how the system adapts, decides, and responds over time.**
 
 ---
 
-## Future Directions
+##  Note
 
-* Deeper state segmentation (micro-orientation)
-* Mapping lyrics timestamps → HRV shifts
-* Color-based HRV visualization
-* Multi-sensor fusion (breathing, motion)
+This project is exploratory and focuses on bridging:
+
+* physiology
+* emotion
+* behavioral patterns
 
 ---
 
-## Final Note
+##  Author
 
-This project shows that the heart:
-
-* Adapts before the mind understands
-* Decides before words form
-* Acts when meaning settles
-
-**HRV is not just variability.**
-It is **direction in motion**.
+Abhishek Gupta
