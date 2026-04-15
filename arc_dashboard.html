@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ColorWithin — A·R·C Biosignal Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: rgba(255,255,255,0.07);
+    --text: #e8e4dc;
+    --muted: rgba(232,228,220,0.4);
+    --red:    #e8403a;
+    --yellow: #f5c842;
+    --blue:   #3a7fd5;
+    --green:  #4ab87a;
+    --purple: #8b5cf6;
+    --white:  #f0ece4;
+    --black:  #1a1018;
+    --gray:   #7a7a8a;
+    --grid: 1px solid rgba(255,255,255,0.05);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* grain overlay */
+  body::before {
+    content:'';
+    position: fixed; inset:0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events:none; z-index:999; opacity:0.6;
+  }
+
+  /* ── Layout ── */
+  .shell {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100vh;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: var(--grid);
+    position: sticky; top:0; z-index:100;
+    background: rgba(10,10,15,0.92);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 22px;
+    font-weight: 300;
+    letter-spacing: 0.08em;
+    color: var(--text);
+  }
+  .logo span { font-style: italic; color: var(--muted); }
+
+  .header-meta {
+    display: flex; gap: 24px; align-items: center;
+  }
+  .badge {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 4px 10px; border-radius: 2px;
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse-dot 2s infinite;
+    display: inline-block; margin-right: 6px;
+  }
+  @keyframes pulse-dot {
+    0%,100% { opacity:1; transform: scale(1); }
+    50%      { opacity:0.4; transform: scale(0.7); }
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: auto auto 1fr;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    grid-row: 1 / 4;
+    border-right: var(--grid);
+    padding: 28px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* Color States Panel */
+  .color-state {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border: 1px solid transparent;
+  }
+  .color-state:hover { background: rgba(255,255,255,0.04); }
+  .color-state.active { border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); }
+
+  .cs-swatch {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 1px;
+    position: relative;
+  }
+  .cs-swatch::after {
+    content:'';
+    position:absolute; inset:3px;
+    border-radius:50%;
+    background: rgba(0,0,0,0.3);
+  }
+
+  .cs-info { flex: 1; }
+  .cs-name { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
+  .cs-emo  { font-family: 'Cormorant Garamond', serif; font-size: 13px; color: var(--muted); font-style:italic; line-height:1.3; }
+  .cs-hrv  { font-size: 9px; color: rgba(255,255,255,0.3); margin-top: 3px; }
+
+  /* ── Top metrics bar ── */
+  .metrics-bar {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-bottom: var(--grid);
+  }
+  .metric-cell {
+    padding: 20px 24px;
+    border-right: var(--grid);
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-cell:last-child { border-right: none; }
+  .metric-cell::before {
+    content:'';
+    position:absolute; bottom:0; left:0; right:0;
+    height: 2px;
+    background: var(--accent, rgba(255,255,255,0.1));
+  }
+  .metric-label {
+    font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .metric-value {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 36px;
+    font-weight: 300;
+    line-height: 1;
+    color: var(--accent, var(--text));
+  }
+  .metric-unit { font-size: 11px; color: var(--muted); }
+  .metric-delta {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .metric-delta.up { color: var(--green); }
+  .metric-delta.down { color: var(--red); }
+
+  /* ── Main chart area ── */
+  .chart-area {
+    grid-column: 2;
+    padding: 24px 28px;
+    border-bottom: var(--grid);
+  }
+  .chart-title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px; font-weight: 300;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .chart-subtitle { font-size: 10px; color: var(--muted); margin-bottom: 20px; }
+
+  .chart-wrap {
+    position: relative;
+    height: 200px;
+  }
+  canvas { width: 100% !important; }
+
+  /* ── Bottom panels ── */
+  .bottom-grid {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+
+  .panel {
+    padding: 24px 28px;
+    border-right: var(--grid);
+    border-top: var(--grid);
+  }
+  .panel:last-child { border-right: none; }
+
+  /* Scatter / ARC Space */
+  .scatter-wrap { height: 200px; position: relative; }
+
+  /* Transition timeline */
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .tl-entry {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid transparent;
+    transition: all 0.2s;
+    cursor: default;
+  }
+  .tl-entry:hover { background: rgba(255,255,255,0.06); }
+  .tl-color-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink:0; }
+  .tl-time { font-size: 10px; color: var(--muted); width: 36px; }
+  .tl-state { font-size: 11px; font-weight: 700; flex: 1; letter-spacing: 0.05em; }
+  .tl-arrow { font-size: 10px; color: var(--muted); }
+  .tl-next  { font-size: 10px; color: var(--muted); }
+
+  /* HRV Feature grid */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .feat-box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 3px;
+    padding: 10px;
+    position: relative;
+    overflow: hidden;
+  }
+  .feat-box::after {
+    content: '';
+    position:absolute; bottom:0; left:0;
+    height: 2px;
+    width: var(--fill, 60%);
+    background: var(--fc, rgba(255,255,255,0.2));
+    transition: width 1.5s cubic-bezier(0.23,1,0.32,1);
+  }
+  .feat-name  { font-size: 9px; letter-spacing: 0.15em; color: var(--muted); text-transform: uppercase; }
+  .feat-value { font-family: 'Cormorant Garamond', serif; font-size: 22px; font-weight: 300; line-height: 1.1; margin-top: 2px; }
+  .feat-unit  { font-size: 9px; color: var(--muted); }
+
+  /* Current state hero */
+  .state-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    border-top: var(--grid);
+    border-right: var(--grid);
+    grid-column: 1;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-orb {
+    width: 80px; height: 80px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, var(--oc, #4ab87a), rgba(0,0,0,0.8));
+    margin-bottom: 16px;
+    box-shadow: 0 0 40px var(--oc, #4ab87a), 0 0 80px rgba(74,184,122,0.2);
+    animation: breathe 4s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%,100% { transform: scale(1); box-shadow: 0 0 40px var(--oc,#4ab87a), 0 0 80px rgba(74,184,122,0.1); }
+    50%      { transform: scale(1.06); box-shadow: 0 0 60px var(--oc,#4ab87a), 0 0 120px rgba(74,184,122,0.25); }
+  }
+  .hero-color-name {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 32px; font-weight: 300;
+    letter-spacing: 0.06em;
+    color: var(--oc, #4ab87a);
+    margin-bottom: 4px;
+  }
+  .hero-sensation {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-size: 14px; color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .hero-emotion {
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 16px;
+  }
+  .hero-arc {
+    display: flex; gap: 16px; margin-top: 8px;
+  }
+  .arc-pill {
+    text-align: center;
+    background: rgba(255,255,255,0.05);
+    padding: 6px 12px; border-radius: 2px;
+  }
+  .arc-axis { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); }
+  .arc-val  { font-family: 'Cormorant Garamond', serif; font-size: 20px; color: var(--text); }
+
+  /* controls */
+  .ctrl-bar {
+    display: flex; gap: 10px; align-items: center;
+    padding: 14px 28px;
+    border-bottom: var(--grid);
+    grid-column: 2;
+  }
+  .ctrl-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text);
+    padding: 6px 14px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.1); }
+  .ctrl-btn.active { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.3); }
+
+  .ctrl-sep { width:1px; height:20px; background: var(--border); }
+  .ctrl-label { font-size: 10px; color: var(--muted); }
+
+  /* bottom section */
+  .bottom-full {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    border-top: var(--grid);
+  }
+
+  /* Popup tooltip */
+  .tooltip {
+    position: fixed;
+    background: rgba(18,18,26,0.97);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 11px;
+    max-width: 220px;
+    pointer-events: none;
+    z-index: 500;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  /* Footer credit */
+  footer {
+    grid-column: 1 / -1;
+    border-top: var(--grid);
+    padding: 12px 32px;
+    display: flex; justify-content: space-between;
+    align-items: center;
+  }
+  footer .credit {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic; font-size: 12px; color: var(--muted);
+  }
+
+  /* Animated in */
+  @keyframes fadeUp {
+    from { opacity:0; transform: translateY(10px); }
+    to   { opacity:1; transform: translateY(0); }
+  }
+  .anim { animation: fadeUp 0.5s ease both; }
+  .anim-d1 { animation-delay: 0.05s; }
+  .anim-d2 { animation-delay: 0.1s; }
+  .anim-d3 { animation-delay: 0.15s; }
+  .anim-d4 { animation-delay: 0.2s; }
+
+  .divider-label {
+    font-size: 9px; letter-spacing:0.2em;
+    text-transform:uppercase; color: var(--muted);
+    padding: 10px 28px 4px;
+    grid-column: 2;
+    border-top: var(--grid);
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header>
+  <div class="logo">Color<span>Within</span> · A·R·C</div>
+  <div class="header-meta">
+    <span class="badge">DREAMER · Sub.01 · Trial 01</span>
+    <span class="badge"><span class="live-dot"></span>Streaming</span>
+    <span class="badge">256 Hz</span>
+  </div>
+</header>
+
+<main>
+  <!-- ──── SIDEBAR ──── -->
+  <aside class="sidebar">
+    <div>
+      <div class="section-label">Emotional Color Map</div>
+      <div id="color-states"></div>
+    </div>
+
+    <div>
+      <div class="section-label">Current Window</div>
+      <div id="state-hero-sidebar">
+        <div style="font-size:10px;color:var(--muted)">Loading simulation...</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ──── METRICS BAR ──── -->
+  <div class="metrics-bar anim anim-d1" id="metrics-bar">
+    <!-- filled by JS -->
+  </div>
+
+  <!-- ──── CONTROLS ──── -->
+  <div class="ctrl-bar anim anim-d2">
+    <span class="ctrl-label">Window:</span>
+    <button class="ctrl-btn" onclick="setWindow(10)">10s</button>
+    <button class="ctrl-btn active" onclick="setWindow(30)" id="btn-30">30s</button>
+    <button class="ctrl-btn" onclick="setWindow(60)">60s</button>
+    <div class="ctrl-sep"></div>
+    <span class="ctrl-label">Axes:</span>
+    <button class="ctrl-btn active" id="btn-A" onclick="toggleAxis('A')">Arousal</button>
+    <button class="ctrl-btn active" id="btn-R" onclick="toggleAxis('R')">Regulation</button>
+    <button class="ctrl-btn active" id="btn-C" onclick="toggleAxis('C')">Coherence</button>
+    <div class="ctrl-sep"></div>
+    <button class="ctrl-btn" id="btn-play" onclick="togglePlay()">⏸ Pause</button>
+  </div>
+
+  <!-- ──── ARC CHART ──── -->
+  <div class="chart-area anim anim-d3">
+    <div class="chart-title">A·R·C Dynamics</div>
+    <div class="chart-subtitle">Arousal · Regulation · Coherence per 30s sliding window · Step 5s</div>
+    <div class="chart-wrap">
+      <canvas id="arcChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ──── BOTTOM PANELS ──── -->
+  <div class="bottom-grid anim anim-d4">
+    <!-- HRV Features -->
+    <div class="panel">
+      <div class="section-label">HRV Feature Vector</div>
+      <div class="feature-grid" id="feature-grid"></div>
+    </div>
+
+    <!-- Transition Log -->
+    <div class="panel">
+      <div class="section-label">State Transition Log</div>
+      <div class="timeline" id="transition-log"></div>
+    </div>
+  </div>
+
+  <!-- ──── SCATTER + STATE HERO ──── -->
+  <div class="divider-label">ARC Phase Space · Current State</div>
+  <div class="bottom-full">
+    <div class="panel" style="grid-column:1/3; border-right: var(--grid);">
+      <div class="section-label">ARC Phase Space (A vs R, colored by C)</div>
+      <div class="scatter-wrap"><canvas id="scatterChart"></canvas></div>
+    </div>
+    <div class="panel" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
+      <div id="orb-wrap"></div>
+    </div>
+  </div>
+
+  <footer style="grid-column:2">
+    <span class="credit">© Abhishek Gupta — The ColorWithin Us</span>
+    <span style="font-size:10px;color:var(--muted)">A-R-C Model · HRV-derived Emotional State Engine</span>
+  </footer>
+</main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// ─── Color definitions ───
+const COLORS = {
+  RED:    { hex:'#e8403a', name:'Red',    sensation:'Heat, pressure, surge',      emotions:'Passion · Anger · Courage',  hrv:'Fast rhythm, high adrenaline', behavior:'Pushes immediate action' },
+  YELLOW: { hex:'#f5c842', name:'Yellow', sensation:'Warmth, expansion',          emotions:'Joy · Curiosity · Connection', hrv:'Balanced HRV, dopamine rise',  behavior:'Encourages connection & learning' },
+  BLUE:   { hex:'#3a7fd5', name:'Blue',   sensation:'Cool stillness',             emotions:'Peace · Sadness · Depth',     hrv:'High HRV coherence',           behavior:'Favors reflection, patience' },
+  GREEN:  { hex:'#4ab87a', name:'Green',  sensation:'Gentle rhythmic pulse',      emotions:'Compassion · Trust · Empathy',hrv:'Oxytocin–serotonin balance',   behavior:'Promotes healing, cooperation' },
+  PURPLE: { hex:'#8b5cf6', name:'Purple', sensation:'Between head and heart',     emotions:'Insight · Intuition · Trauma',hrv:'HRV–brain coherence',          behavior:'Supports creativity & clarity' },
+  WHITE:  { hex:'#f0ece4', name:'White',  sensation:'Still heat, expansion',      emotions:'Acceptance · Surrender · Observation',hrv:'Peak HRV stability',  behavior:'Leads to wise detachment' },
+  BLACK:  { hex:'#4a3040', name:'Black',  sensation:'Tightness, heaviness',       emotions:'Fear · Withdrawal · Unacceptance',hrv:'Low HRV, high cortisol',  behavior:'Triggers protection instinct' },
+  GRAY:   { hex:'#7a7a8a', name:'Gray',   sensation:'Wavering rhythm',            emotions:'Confusion · Transition · Disconnect',hrv:'Irregular HRV',        behavior:'Recalibration before reset' },
+};
+
+// ─── Populate sidebar color states ───
+const csContainer = document.getElementById('color-states');
+Object.entries(COLORS).forEach(([key, c]) => {
+  const el = document.createElement('div');
+  el.className = 'color-state'; el.id = 'cs-'+key;
+  el.innerHTML = `
+    <div class="cs-swatch" style="background:${c.hex}"></div>
+    <div class="cs-info">
+      <div class="cs-name" style="color:${c.hex}">${c.name.toUpperCase()}</div>
+      <div class="cs-emo">${c.emotions}</div>
+      <div class="cs-hrv">${c.hrv}</div>
+    </div>`;
+  csContainer.appendChild(el);
+});
+
+// ─── Simulate ARC data (realistic ECG-derived trajectory) ───
+function generateARCData(n=80) {
+  const A=[], R=[], C=[], states=[];
+  let a=0.2, r=0.5, c=0.6;
+  const colorSeq = ['GREEN','GREEN','YELLOW','YELLOW','RED','GRAY','BLUE','BLUE','GREEN','PURPLE','WHITE','GREEN'];
+  for(let i=0;i<n;i++){
+    const t = i/n;
+    // smooth random walk with color arc narrative
+    a += (Math.random()-0.48)*0.4 + Math.sin(t*Math.PI*3)*0.15;
+    r += (Math.random()-0.48)*0.35 + Math.cos(t*Math.PI*2)*0.1;
+    c += (Math.random()-0.48)*0.25 + Math.sin(t*Math.PI*4)*0.08;
+    a = Math.max(-3, Math.min(3, a));
+    r = Math.max(-3, Math.min(3, r));
+    c = Math.max(0, Math.min(3, c));
+    A.push(+a.toFixed(3));
+    R.push(+r.toFixed(3));
+    C.push(+c.toFixed(3));
+    states.push(mapColor(a,r,c));
+  }
+  return {A,R,C,states};
+}
+
+function mapColor(a,r,c) {
+  const dA = Math.abs((A_prev !== undefined ? a - A_prev : 0));
+  const dR = Math.abs((R_prev !== undefined ? r - R_prev : 0));
+  if(dA > 1 || dR > 1) return 'GRAY';
+  if(a > 1.5 && r < 0)   return 'RED';
+  if(a > 0.5 && r > 0.5) return 'YELLOW';
+  if(a < -0.5 && r > 0.5)return 'BLUE';
+  if(c > 1.2)             return 'GREEN';
+  if(a > 0 && c > 0.8 && r > 0) return 'PURPLE';
+  if(r > 1.5 && c > 1)   return 'WHITE';
+  if(r < -1.5)            return 'BLACK';
+  return 'GRAY';
+}
+let A_prev, R_prev;
+
+const sim = generateARCData(100);
+const {A:arcA, R:arcR, C:arcC, states:arcStates} = sim;
+
+// ─── HRV feature simulation ───
+function simHRV(i) {
+  const noise = () => (Math.random()-0.5)*0.3;
+  const base = {
+    HR:    60 + arcA[i]*8 + noise()*5,
+    RMSSD: 45 - arcA[i]*6 + arcR[i]*8 + noise()*5,
+    SDNN:  55 - arcA[i]*4 + arcR[i]*5 + noise()*4,
+    pNN50: 20 + arcR[i]*12 + noise()*4,
+    LF:    0.08 + arcA[i]*0.04 + noise()*0.01,
+    HF:    0.06 + arcR[i]*0.05 + noise()*0.01,
+    LFHF:  1.2 + arcA[i]*0.6 - arcR[i]*0.4,
+    SD1:   30 + arcR[i]*10 + noise()*3,
+    SD2:   60 + arcA[i]*5 + noise()*4,
+  };
+  return base;
+}
+
+// ─── Chart.js setup ───
+const N = arcA.length;
+const labels = Array.from({length:N}, (_,i)=>`${(i*5).toString().padStart(3,'0')}s`);
+
+const arcCtx = document.getElementById('arcChart').getContext('2d');
+const arcChart = new Chart(arcCtx, {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label:'Arousal (A)', data: arcA, borderColor:'#e8403a', backgroundColor:'rgba(232,64,58,0.07)', tension:0.4, pointRadius:0, borderWidth:2 },
+      { label:'Regulation (R)', data: arcR, borderColor:'#4ab87a', backgroundColor:'rgba(74,184,122,0.07)', tension:0.4, pointRadius:0, borderWidth:2 },
+      { label:'Coherence (C)', data: arcC, borderColor:'#3a7fd5', backgroundColor:'rgba(58,127,213,0.07)', tension:0.4, pointRadius:0, borderWidth:2 },
+    ]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    animation: { duration: 400 },
+    plugins: {
+      legend: { labels:{ color:'rgba(232,228,220,0.6)', font:{family:'Space Mono',size:10}, boxWidth:12, boxHeight:2 } },
+      tooltip: { backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1, callbacks:{
+        afterLabel: (ctx) => {
+          if(ctx.datasetIndex === 0) {
+            const i = ctx.dataIndex;
+            return `State: ${arcStates[i]}`;
+          }
+          return '';
+        }
+      }}
+    },
+    scales: {
+      x: { grid:{ color:'rgba(255,255,255,0.04)'}, ticks:{ color:'rgba(232,228,220,0.3)', font:{family:'Space Mono',size:9}, maxTicksLimit:12 }},
+      y: { grid:{ color:'rgba(255,255,255,0.04)'}, ticks:{ color:'rgba(232,228,220,0.3)', font:{family:'Space Mono',size:9} }}
+    }
+  }
+});
+
+// cursor line plugin
+const cursorPlugin = {
+  id:'cursor',
+  afterDraw(chart) {
+    const idx = cursorIdx;
+    if(idx < 0) return;
+    const {ctx, chartArea:{left,right,top,bottom}, scales:{x}} = chart;
+    const xp = x.getPixelForValue(idx);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(xp,top); ctx.lineTo(xp,bottom); ctx.stroke();
+    ctx.restore();
+  }
+};
+Chart.register(cursorPlugin);
+
+// ─── Scatter chart ───
+const scatterCtx = document.getElementById('scatterChart').getContext('2d');
+const scatterData = arcA.map((a,i) => ({x:a, y:arcR[i], c:arcC[i], state:arcStates[i]}));
+const scatterColors = scatterData.map(d => COLORS[d.state]?.hex || '#7a7a8a');
+
+const scatterChart = new Chart(scatterCtx, {
+  type: 'scatter',
+  data: {
+    datasets: [{
+      label:'ARC Points',
+      data: scatterData.map(d=>({x:d.x,y:d.y})),
+      backgroundColor: scatterColors.map(c => c+'aa'),
+      borderColor: scatterColors,
+      borderWidth: 1,
+      pointRadius: 4,
+      pointHoverRadius: 7,
+    }]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    plugins: {
+      legend:{display:false},
+      tooltip:{ backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+        callbacks:{ label: (ctx) => {
+          const i = ctx.dataIndex;
+          const s = arcStates[i];
+          return [`A: ${arcA[i].toFixed(2)}  R: ${arcR[i].toFixed(2)}  C: ${arcC[i].toFixed(2)}`, `State: ${s}`];
+        }}
+      }
+    },
+    scales: {
+      x: { title:{display:true, text:'AROUSAL', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}},
+      y: { title:{display:true, text:'REGULATION', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}}
+    }
+  }
+});
+
+// ─── Feature grid ───
+const featDefs = [
+  {key:'HR',    label:'HR',    unit:'bpm', max:100, color:'#e8403a'},
+  {key:'RMSSD', label:'RMSSD', unit:'ms',  max:100, color:'#4ab87a'},
+  {key:'SDNN',  label:'SDNN',  unit:'ms',  max:120, color:'#f5c842'},
+  {key:'pNN50', label:'pNN50', unit:'%',   max:50,  color:'#3a7fd5'},
+  {key:'LF',    label:'LF',    unit:'n.u.',max:0.2, color:'#8b5cf6'},
+  {key:'HF',    label:'HF',    unit:'n.u.',max:0.2, color:'#4ab87a'},
+  {key:'LFHF',  label:'LF/HF', unit:'',   max:3,   color:'#f5c842'},
+  {key:'SD1',   label:'SD1',   unit:'ms',  max:80,  color:'#3a7fd5'},
+  {key:'SD2',   label:'SD2',   unit:'ms',  max:120, color:'#e8403a'},
+];
+const fgEl = document.getElementById('feature-grid');
+featDefs.forEach(f => {
+  const el = document.createElement('div');
+  el.className = 'feat-box'; el.id = 'feat-'+f.key;
+  el.style.setProperty('--fc', f.color);
+  el.innerHTML = `<div class="feat-name">${f.label}</div><div class="feat-value" id="fv-${f.key}">—</div><div class="feat-unit">${f.unit}</div>`;
+  fgEl.appendChild(el);
+});
+
+function updateFeatures(i) {
+  const h = simHRV(i);
+  featDefs.forEach(f => {
+    const v = h[f.key];
+    const el = document.getElementById('fv-'+f.key);
+    if(el) el.textContent = v.toFixed(f.unit==='%'||f.unit==='bpm'?1:2);
+    const box = document.getElementById('feat-'+f.key);
+    if(box) box.style.setProperty('--fill', Math.min(100, (v/f.max)*100)+'%');
+  });
+}
+
+// ─── Metrics bar ───
+function updateMetrics(i) {
+  const col = arcStates[i];
+  const c = COLORS[col];
+  const h = simHRV(i);
+  const metrics = [
+    {label:'Heart Rate', val:h.HR.toFixed(0), unit:'bpm', delta:'+2.3%', up:arcA[i]>0, accent:c.hex},
+    {label:'RMSSD', val:h.RMSSD.toFixed(1), unit:'ms', delta:arcR[i]>0?'↑ High':arcR[i]<-0.5?'↓ Low':'→ Stable', up:arcR[i]>0, accent:COLORS.GREEN.hex},
+    {label:'LF/HF Ratio', val:h.LFHF.toFixed(2), unit:'', delta:arcA[i]>0?'Sympathetic++':'Parasympathetic++', up:arcA[i]>0, accent:COLORS.YELLOW.hex},
+    {label:'Coherence (C)', val:arcC[i].toFixed(2), unit:'', delta:arcC[i]>1?'High Coherence':'Low Coherence', up:arcC[i]>1, accent:COLORS.BLUE.hex},
+  ];
+  const mb = document.getElementById('metrics-bar');
+  mb.innerHTML = metrics.map(m=>`
+    <div class="metric-cell" style="--accent:${m.accent}">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value" style="color:${m.accent}">${m.val}<span class="metric-unit"> ${m.unit}</span></div>
+      <div class="metric-delta ${m.up?'up':'down'}">${m.delta}</div>
+    </div>`).join('');
+}
+
+// ─── State hero / orb ───
+function updateOrb(i) {
+  const col = arcStates[i];
+  const c = COLORS[col];
+  const wrap = document.getElementById('orb-wrap');
+  wrap.innerHTML = `
+    <div class="hero-orb" style="--oc:${c.hex};background:radial-gradient(circle at 35% 35%, ${c.hex}, rgba(0,0,0,0.8));box-shadow:0 0 40px ${c.hex}, 0 0 80px ${c.hex}33;animation:breathe 4s ease-in-out infinite"></div>
+    <div class="hero-color-name" style="color:${c.hex}">${c.name}</div>
+    <div class="hero-sensation">${c.sensation}</div>
+    <div class="hero-emotion">${c.emotions}</div>
+    <div style="font-size:9px;color:var(--muted);max-width:160px;line-height:1.5">${c.behavior}</div>
+    <div class="hero-arc">
+      <div class="arc-pill"><div class="arc-axis">A</div><div class="arc-val">${arcA[i].toFixed(2)}</div></div>
+      <div class="arc-pill"><div class="arc-axis">R</div><div class="arc-val">${arcR[i].toFixed(2)}</div></div>
+      <div class="arc-pill"><div class="arc-axis">C</div><div class="arc-val">${arcC[i].toFixed(2)}</div></div>
+    </div>`;
+
+  // highlight sidebar
+  document.querySelectorAll('.color-state').forEach(el => el.classList.remove('active'));
+  const cs = document.getElementById('cs-'+col);
+  if(cs) { cs.classList.add('active'); cs.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+}
+
+// ─── Transition log ───
+const transitionLog = [];
+let lastState = '';
+function buildTransitionLog(upTo) {
+  for(let i=0; i<=upTo; i++) {
+    const s = arcStates[i];
+    if(s !== lastState) {
+      transitionLog.push({time: `${(i*5)}s`, from: lastState || '—', to: s});
+      lastState = s;
+    }
+  }
+  const el = document.getElementById('transition-log');
+  const recent = transitionLog.slice(-6).reverse();
+  el.innerHTML = recent.map(t => {
+    const c = COLORS[t.to];
+    return `<div class="tl-entry" style="border-left-color:${c?.hex||'#7a7a8a'}">
+      <div class="tl-color-dot" style="background:${c?.hex||'#7a7a8a'}"></div>
+      <div class="tl-time">${t.time}</div>
+      <div class="tl-state" style="color:${c?.hex||'#7a7a8a'}">${t.to}</div>
+      <div class="tl-arrow">←</div>
+      <div class="tl-next">${t.from}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Playback ───
+let cursorIdx = 0;
+let playing = true;
+let interval;
+let windowSize = 30;
+let visAxes = {A:true, R:true, C:true};
+
+function tick() {
+  if(!playing) return;
+  cursorIdx = (cursorIdx + 1) % N;
+  buildTransitionLog(cursorIdx);
+  updateFeatures(cursorIdx);
+  updateMetrics(cursorIdx);
+  updateOrb(cursorIdx);
+
+  // highlight current scatter point
+  const pts = scatterChart.data.datasets[0].pointRadius;
+  scatterChart.data.datasets[0].pointRadius = arcA.map((_,i) => i === cursorIdx ? 9 : 4);
+  scatterChart.data.datasets[0].borderWidth = arcA.map((_,i) => i === cursorIdx ? 2 : 1);
+  scatterChart.update('none');
+  arcChart.update('none');
+}
+
+function startPlay() {
+  interval = setInterval(tick, 400);
+}
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('btn-play').textContent = playing ? '⏸ Pause' : '▶ Play';
+  if(playing) startPlay(); else clearInterval(interval);
+}
+function setWindow(w) {
+  windowSize = w;
+  document.querySelectorAll('.ctrl-btn').forEach(b=>{
+    if(['10','30','60'].includes(b.textContent.replace('s',''))) b.classList.remove('active');
+  });
+  document.getElementById('btn-'+w)?.classList.add('active');
+}
+function toggleAxis(ax) {
+  visAxes[ax] = !visAxes[ax];
+  const btn = document.getElementById('btn-'+ax);
+  btn?.classList.toggle('active', visAxes[ax]);
+  const map = {A:0, R:1, C:2};
+  arcChart.data.datasets[map[ax]].hidden = !visAxes[ax];
+  arcChart.update();
+}
+
+// ─── Init ───
+buildTransitionLog(0);
+updateFeatures(0);
+updateMetrics(0);
+updateOrb(0);
+startPlay();
+</script>
+</body>
+</html>
