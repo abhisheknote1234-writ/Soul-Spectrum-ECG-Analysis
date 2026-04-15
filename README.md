@@ -105,6 +105,51 @@ pip install -r requirements.txt
 python Ecg_Heartbeat.py
 ```
 
+### Real-time API mode (A-R-C dashboard + HRV backend)
+
+```bash
+pip install -r requirements.txt
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Then open:
+
+- `arc_dashboard.html` in browser
+- ensure frontend API base points to backend:
+  - default: `http://localhost:8000`
+  - optional in browser console: `localStorage.setItem("ARC_API_BASE", "http://localhost:8000")`
+  - optional session selection: `localStorage.setItem("ARC_SESSION_ID", "default")`
+
+### Data ingestion contract
+
+- Stream raw samples (ECG/PPG/EMG) to backend:
+  - `POST /api/ingest-data`
+  - `WebSocket /ws/process-data`
+- Read latest processed 30s window output every 5s:
+  - `GET /api/process-data?session_id=default`
+
+Returned payload:
+
+```json
+{
+  "A": 0.62,
+  "R": 0.55,
+  "C": 0.71,
+  "state": "YELLOW",
+  "features": {
+    "HR": 76.4,
+    "RMSSD": 34.2,
+    "SDNN": 52.8,
+    "pNN50": 18.2,
+    "LF": 0.11,
+    "HF": 0.06,
+    "LFHF": 1.83,
+    "SD1": 24.6,
+    "SD2": 58.7
+  }
+}
+```
+
 ---
 
 ##  Experimental Insight

@@ -520,6 +520,10 @@ const COLORS = {
   GRAY:   { hex:'#7a7a8a', name:'Gray',   sensation:'Wavering rhythm',            emotions:'Confusion · Transition · Disconnect',hrv:'Irregular HRV',        behavior:'Recalibration before reset' },
 };
 
+const API_BASE = localStorage.getItem('ARC_API_BASE') || 'http://localhost:8000';
+const SESSION_ID = localStorage.getItem('ARC_SESSION_ID') || 'default';
+const STEP_SECONDS = 5;
+
 // ─── Populate sidebar color states ───
 const csContainer = document.getElementById('color-states');
 Object.entries(COLORS).forEach(([key, c]) => {
@@ -535,66 +539,39 @@ Object.entries(COLORS).forEach(([key, c]) => {
   csContainer.appendChild(el);
 });
 
-// ─── Simulate ARC data (realistic ECG-derived trajectory) ───
-function generateARCData(n=80) {
-  const A=[], R=[], C=[], states=[];
-  let a=0.2, r=0.5, c=0.6;
-  const colorSeq = ['GREEN','GREEN','YELLOW','YELLOW','RED','GRAY','BLUE','BLUE','GREEN','PURPLE','WHITE','GREEN'];
-  for(let i=0;i<n;i++){
-    const t = i/n;
-    // smooth random walk with color arc narrative
-    a += (Math.random()-0.48)*0.4 + Math.sin(t*Math.PI*3)*0.15;
-    r += (Math.random()-0.48)*0.35 + Math.cos(t*Math.PI*2)*0.1;
-    c += (Math.random()-0.48)*0.25 + Math.sin(t*Math.PI*4)*0.08;
-    a = Math.max(-3, Math.min(3, a));
-    r = Math.max(-3, Math.min(3, r));
-    c = Math.max(0, Math.min(3, c));
-    A.push(+a.toFixed(3));
-    R.push(+r.toFixed(3));
-    C.push(+c.toFixed(3));
-    states.push(mapColor(a,r,c));
-  }
-  return {A,R,C,states};
-}
+const arcA = [];
+const arcR = [];
+const arcC = [];
+const arcStates = [];
+const labels = [];
+const transitionLog = [];
+let lastState = '';
+let cursorIdx = -1;
+let windowSize = 30;
+let visAxes = {A:true, R:true, C:true};
+let playing = true;
+let pollTimer = null;
+let pointCounter = 0;
 
-function mapColor(a,r,c) {
-  const dA = Math.abs((A_prev !== undefined ? a - A_prev : 0));
-  const dR = Math.abs((R_prev !== undefined ? r - R_prev : 0));
-  if(dA > 1 || dR > 1) return 'GRAY';
-  if(a > 1.5 && r < 0)   return 'RED';
-  if(a > 0.5 && r > 0.5) return 'YELLOW';
-  if(a < -0.5 && r > 0.5)return 'BLUE';
-  if(c > 1.2)             return 'GREEN';
-  if(a > 0 && c > 0.8 && r > 0) return 'PURPLE';
-  if(r > 1.5 && c > 1)   return 'WHITE';
-  if(r < -1.5)            return 'BLACK';
-  return 'GRAY';
-}
-let A_prev, R_prev;
-
-const sim = generateARCData(100);
-const {A:arcA, R:arcR, C:arcC, states:arcStates} = sim;
-
-// ─── HRV feature simulation ───
-function simHRV(i) {
-  const noise = () => (Math.random()-0.5)*0.3;
-  const base = {
-    HR:    60 + arcA[i]*8 + noise()*5,
-    RMSSD: 45 - arcA[i]*6 + arcR[i]*8 + noise()*5,
-    SDNN:  55 - arcA[i]*4 + arcR[i]*5 + noise()*4,
-    pNN50: 20 + arcR[i]*12 + noise()*4,
-    LF:    0.08 + arcA[i]*0.04 + noise()*0.01,
-    HF:    0.06 + arcR[i]*0.05 + noise()*0.01,
-    LFHF:  1.2 + arcA[i]*0.6 - arcR[i]*0.4,
-    SD1:   30 + arcR[i]*10 + noise()*3,
-    SD2:   60 + arcA[i]*5 + noise()*4,
-  };
-  return base;
-}
-
-// ─── Chart.js setup ───
-const N = arcA.length;
-const labels = Array.from({length:N}, (_,i)=>`${(i*5).toString().padStart(3,'0')}s`);
+const featDefs = [
+  {key:'HR',    label:'HR',    unit:'bpm', max:120, color:'#e8403a'},
+  {key:'RMSSD', label:'RMSSD', unit:'ms',  max:120, color:'#4ab87a'},
+  {key:'SDNN',  label:'SDNN',  unit:'ms',  max:150, color:'#f5c842'},
+  {key:'pNN50', label:'pNN50', unit:'%',   max:100, color:'#3a7fd5'},
+  {key:'LF',    label:'LF',    unit:'n.u.',max:0.4, color:'#8b5cf6'},
+  {key:'HF',    label:'HF',    unit:'n.u.',max:0.4, color:'#4ab87a'},
+  {key:'LFHF',  label:'LF/HF', unit:'',    max:5,   color:'#f5c842'},
+  {key:'SD1',   label:'SD1',   unit:'ms',  max:100, color:'#3a7fd5'},
+  {key:'SD2',   label:'SD2',   unit:'ms',  max:160, color:'#e8403a'},
+];
+const fgEl = document.getElementById('feature-grid');
+featDefs.forEach(f => {
+  const el = document.createElement('div');
+  el.className = 'feat-box'; el.id = 'feat-'+f.key;
+  el.style.setProperty('--fc', f.color);
+  el.innerHTML = `<div class="feat-name">${f.label}</div><div class="feat-value" id="fv-${f.key}">—</div><div class="feat-unit">${f.unit}</div>`;
+  fgEl.appendChild(el);
+});
 
 const arcCtx = document.getElementById('arcChart').getContext('2d');
 const arcChart = new Chart(arcCtx, {
@@ -609,34 +586,35 @@ const arcChart = new Chart(arcCtx, {
   },
   options: {
     responsive:true, maintainAspectRatio:false,
-    animation: { duration: 400 },
+    animation: { duration: 250 },
     plugins: {
       legend: { labels:{ color:'rgba(232,228,220,0.6)', font:{family:'Space Mono',size:10}, boxWidth:12, boxHeight:2 } },
-      tooltip: { backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1, callbacks:{
-        afterLabel: (ctx) => {
-          if(ctx.datasetIndex === 0) {
-            const i = ctx.dataIndex;
-            return `State: ${arcStates[i]}`;
-          }
-          return '';
+      tooltip: {
+        backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+        callbacks:{
+          afterLabel: (ctx) => `State: ${arcStates[ctx.dataIndex] || '—'}`
         }
-      }}
+      }
     },
     scales: {
       x: { grid:{ color:'rgba(255,255,255,0.04)'}, ticks:{ color:'rgba(232,228,220,0.3)', font:{family:'Space Mono',size:9}, maxTicksLimit:12 }},
-      y: { grid:{ color:'rgba(255,255,255,0.04)'}, ticks:{ color:'rgba(232,228,220,0.3)', font:{family:'Space Mono',size:9} }}
+      y: {
+        min: 0,
+        max: 1,
+        grid:{ color:'rgba(255,255,255,0.04)'},
+        ticks:{ color:'rgba(232,228,220,0.3)', font:{family:'Space Mono',size:9} }
+      }
     }
   }
 });
 
-// cursor line plugin
 const cursorPlugin = {
   id:'cursor',
   afterDraw(chart) {
-    const idx = cursorIdx;
-    if(idx < 0) return;
-    const {ctx, chartArea:{left,right,top,bottom}, scales:{x}} = chart;
-    const xp = x.getPixelForValue(idx);
+    if (cursorIdx < 0 || !chart.data.labels.length) return;
+    const {ctx, chartArea:{top,bottom}, scales:{x}} = chart;
+    const xp = x.getPixelForValue(cursorIdx);
+    if (!Number.isFinite(xp)) return;
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.3)';
     ctx.lineWidth = 1;
@@ -647,19 +625,15 @@ const cursorPlugin = {
 };
 Chart.register(cursorPlugin);
 
-// ─── Scatter chart ───
 const scatterCtx = document.getElementById('scatterChart').getContext('2d');
-const scatterData = arcA.map((a,i) => ({x:a, y:arcR[i], c:arcC[i], state:arcStates[i]}));
-const scatterColors = scatterData.map(d => COLORS[d.state]?.hex || '#7a7a8a');
-
 const scatterChart = new Chart(scatterCtx, {
   type: 'scatter',
   data: {
     datasets: [{
       label:'ARC Points',
-      data: scatterData.map(d=>({x:d.x,y:d.y})),
-      backgroundColor: scatterColors.map(c => c+'aa'),
-      borderColor: scatterColors,
+      data: [],
+      backgroundColor: [],
+      borderColor: [],
       borderWidth: 1,
       pointRadius: 4,
       pointHoverRadius: 7,
@@ -669,63 +643,46 @@ const scatterChart = new Chart(scatterCtx, {
     responsive:true, maintainAspectRatio:false,
     plugins: {
       legend:{display:false},
-      tooltip:{ backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
-        callbacks:{ label: (ctx) => {
-          const i = ctx.dataIndex;
-          const s = arcStates[i];
-          return [`A: ${arcA[i].toFixed(2)}  R: ${arcR[i].toFixed(2)}  C: ${arcC[i].toFixed(2)}`, `State: ${s}`];
-        }}
+      tooltip:{
+        backgroundColor:'rgba(18,18,26,0.95)', titleColor:'#e8e4dc', bodyColor:'rgba(232,228,220,0.7)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
+        callbacks:{
+          label: (ctx) => {
+            const i = ctx.dataIndex;
+            const s = arcStates[i] || 'GRAY';
+            return [`A: ${arcA[i]?.toFixed(2) || '0.00'}  R: ${arcR[i]?.toFixed(2) || '0.00'}  C: ${arcC[i]?.toFixed(2) || '0.00'}`, `State: ${s}`];
+          }
+        }
       }
     },
     scales: {
-      x: { title:{display:true, text:'AROUSAL', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}},
-      y: { title:{display:true, text:'REGULATION', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}}
+      x: { min:0, max:1, title:{display:true, text:'AROUSAL', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}},
+      y: { min:0, max:1, title:{display:true, text:'REGULATION', color:'rgba(232,228,220,0.4)', font:{family:'Space Mono',size:9}}, grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'rgba(232,228,220,0.3)',font:{family:'Space Mono',size:9}}}
     }
   }
 });
 
-// ─── Feature grid ───
-const featDefs = [
-  {key:'HR',    label:'HR',    unit:'bpm', max:100, color:'#e8403a'},
-  {key:'RMSSD', label:'RMSSD', unit:'ms',  max:100, color:'#4ab87a'},
-  {key:'SDNN',  label:'SDNN',  unit:'ms',  max:120, color:'#f5c842'},
-  {key:'pNN50', label:'pNN50', unit:'%',   max:50,  color:'#3a7fd5'},
-  {key:'LF',    label:'LF',    unit:'n.u.',max:0.2, color:'#8b5cf6'},
-  {key:'HF',    label:'HF',    unit:'n.u.',max:0.2, color:'#4ab87a'},
-  {key:'LFHF',  label:'LF/HF', unit:'',   max:3,   color:'#f5c842'},
-  {key:'SD1',   label:'SD1',   unit:'ms',  max:80,  color:'#3a7fd5'},
-  {key:'SD2',   label:'SD2',   unit:'ms',  max:120, color:'#e8403a'},
-];
-const fgEl = document.getElementById('feature-grid');
-featDefs.forEach(f => {
-  const el = document.createElement('div');
-  el.className = 'feat-box'; el.id = 'feat-'+f.key;
-  el.style.setProperty('--fc', f.color);
-  el.innerHTML = `<div class="feat-name">${f.label}</div><div class="feat-value" id="fv-${f.key}">—</div><div class="feat-unit">${f.unit}</div>`;
-  fgEl.appendChild(el);
-});
-
-function updateFeatures(i) {
-  const h = simHRV(i);
+function updateFeatures(features) {
   featDefs.forEach(f => {
-    const v = h[f.key];
+    const v = Number(features?.[f.key] ?? 0);
     const el = document.getElementById('fv-'+f.key);
-    if(el) el.textContent = v.toFixed(f.unit==='%'||f.unit==='bpm'?1:2);
+    if(el) {
+      const precision = f.unit==='%' || f.unit==='bpm' ? 1 : 3;
+      el.textContent = Number.isFinite(v) ? v.toFixed(precision) : '—';
+    }
     const box = document.getElementById('feat-'+f.key);
-    if(box) box.style.setProperty('--fill', Math.min(100, (v/f.max)*100)+'%');
+    if(box) box.style.setProperty('--fill', Math.min(100, Math.max(0, (v/f.max)*100))+'%');
   });
 }
 
-// ─── Metrics bar ───
-function updateMetrics(i) {
-  const col = arcStates[i];
-  const c = COLORS[col];
-  const h = simHRV(i);
+function updateMetrics(payload) {
+  const col = payload?.state || 'GRAY';
+  const c = COLORS[col] || COLORS.GRAY;
+  const f = payload?.features || {};
   const metrics = [
-    {label:'Heart Rate', val:h.HR.toFixed(0), unit:'bpm', delta:'+2.3%', up:arcA[i]>0, accent:c.hex},
-    {label:'RMSSD', val:h.RMSSD.toFixed(1), unit:'ms', delta:arcR[i]>0?'↑ High':arcR[i]<-0.5?'↓ Low':'→ Stable', up:arcR[i]>0, accent:COLORS.GREEN.hex},
-    {label:'LF/HF Ratio', val:h.LFHF.toFixed(2), unit:'', delta:arcA[i]>0?'Sympathetic++':'Parasympathetic++', up:arcA[i]>0, accent:COLORS.YELLOW.hex},
-    {label:'Coherence (C)', val:arcC[i].toFixed(2), unit:'', delta:arcC[i]>1?'High Coherence':'Low Coherence', up:arcC[i]>1, accent:COLORS.BLUE.hex},
+    {label:'Heart Rate', val:(f.HR ?? 0).toFixed(1), unit:'bpm', delta: payload.A > 0.65 ? 'Sympathetic ↑' : 'Moderate', up:payload.A > 0.65, accent:c.hex},
+    {label:'RMSSD', val:(f.RMSSD ?? 0).toFixed(2), unit:'ms', delta:payload.R > 0.6 ? 'Regulated ↑' : 'Regulation ↓', up:payload.R > 0.6, accent:COLORS.GREEN.hex},
+    {label:'LF/HF Ratio', val:(f.LFHF ?? 0).toFixed(3), unit:'', delta:(f.LFHF ?? 0) > 2 ? 'Sympathetic++' : 'Parasympathetic+', up:(f.LFHF ?? 0) > 2, accent:COLORS.YELLOW.hex},
+    {label:'Coherence (C)', val:(payload.C ?? 0).toFixed(3), unit:'', delta:payload.C > 0.7 ? 'High coherence' : 'Developing', up:payload.C > 0.7, accent:COLORS.BLUE.hex},
   ];
   const mb = document.getElementById('metrics-bar');
   mb.innerHTML = metrics.map(m=>`
@@ -736,10 +693,9 @@ function updateMetrics(i) {
     </div>`).join('');
 }
 
-// ─── State hero / orb ───
-function updateOrb(i) {
-  const col = arcStates[i];
-  const c = COLORS[col];
+function updateOrb(payload) {
+  const col = payload?.state || 'GRAY';
+  const c = COLORS[col] || COLORS.GRAY;
   const wrap = document.getElementById('orb-wrap');
   wrap.innerHTML = `
     <div class="hero-orb" style="--oc:${c.hex};background:radial-gradient(circle at 35% 35%, ${c.hex}, rgba(0,0,0,0.8));box-shadow:0 0 40px ${c.hex}, 0 0 80px ${c.hex}33;animation:breathe 4s ease-in-out infinite"></div>
@@ -748,80 +704,172 @@ function updateOrb(i) {
     <div class="hero-emotion">${c.emotions}</div>
     <div style="font-size:9px;color:var(--muted);max-width:160px;line-height:1.5">${c.behavior}</div>
     <div class="hero-arc">
-      <div class="arc-pill"><div class="arc-axis">A</div><div class="arc-val">${arcA[i].toFixed(2)}</div></div>
-      <div class="arc-pill"><div class="arc-axis">R</div><div class="arc-val">${arcR[i].toFixed(2)}</div></div>
-      <div class="arc-pill"><div class="arc-axis">C</div><div class="arc-val">${arcC[i].toFixed(2)}</div></div>
+      <div class="arc-pill"><div class="arc-axis">A</div><div class="arc-val">${(payload.A ?? 0).toFixed(3)}</div></div>
+      <div class="arc-pill"><div class="arc-axis">R</div><div class="arc-val">${(payload.R ?? 0).toFixed(3)}</div></div>
+      <div class="arc-pill"><div class="arc-axis">C</div><div class="arc-val">${(payload.C ?? 0).toFixed(3)}</div></div>
     </div>`;
 
-  // highlight sidebar
   document.querySelectorAll('.color-state').forEach(el => el.classList.remove('active'));
   const cs = document.getElementById('cs-'+col);
-  if(cs) { cs.classList.add('active'); cs.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+  if(cs) cs.classList.add('active');
 }
 
-// ─── Transition log ───
-const transitionLog = [];
-let lastState = '';
-function buildTransitionLog(upTo) {
-  for(let i=0; i<=upTo; i++) {
-    const s = arcStates[i];
-    if(s !== lastState) {
-      transitionLog.push({time: `${(i*5)}s`, from: lastState || '—', to: s});
-      lastState = s;
-    }
-  }
+function buildTransitionLog() {
   const el = document.getElementById('transition-log');
   const recent = transitionLog.slice(-6).reverse();
   el.innerHTML = recent.map(t => {
-    const c = COLORS[t.to];
-    return `<div class="tl-entry" style="border-left-color:${c?.hex||'#7a7a8a'}">
-      <div class="tl-color-dot" style="background:${c?.hex||'#7a7a8a'}"></div>
+    const c = COLORS[t.to] || COLORS.GRAY;
+    return `<div class="tl-entry" style="border-left-color:${c.hex}">
+      <div class="tl-color-dot" style="background:${c.hex}"></div>
       <div class="tl-time">${t.time}</div>
-      <div class="tl-state" style="color:${c?.hex||'#7a7a8a'}">${t.to}</div>
+      <div class="tl-state" style="color:${c.hex}">${t.to}</div>
       <div class="tl-arrow">←</div>
       <div class="tl-next">${t.from}</div>
     </div>`;
   }).join('');
 }
 
-// ─── Playback ───
-let cursorIdx = 0;
-let playing = true;
-let interval;
-let windowSize = 30;
-let visAxes = {A:true, R:true, C:true};
+function enforceWindowLimit() {
+  const maxPoints = Math.max(6, Math.round(windowSize / STEP_SECONDS));
+  while (arcA.length > maxPoints) {
+    arcA.shift(); arcR.shift(); arcC.shift(); arcStates.shift(); labels.shift();
+  }
+}
 
-function tick() {
-  if(!playing) return;
-  cursorIdx = (cursorIdx + 1) % N;
-  buildTransitionLog(cursorIdx);
-  updateFeatures(cursorIdx);
-  updateMetrics(cursorIdx);
-  updateOrb(cursorIdx);
-
-  // highlight current scatter point
-  const pts = scatterChart.data.datasets[0].pointRadius;
-  scatterChart.data.datasets[0].pointRadius = arcA.map((_,i) => i === cursorIdx ? 9 : 4);
+function refreshCharts() {
+  const scatterData = arcA.map((a,i) => ({x:a, y:arcR[i]}));
+  const scatterColors = arcStates.map(s => (COLORS[s] || COLORS.GRAY).hex);
+  scatterChart.data.datasets[0].data = scatterData;
+  scatterChart.data.datasets[0].backgroundColor = scatterColors.map(c => c+'aa');
+  scatterChart.data.datasets[0].borderColor = scatterColors;
+  scatterChart.data.datasets[0].pointRadius = arcA.map((_,i) => i === cursorIdx ? 8 : 4);
   scatterChart.data.datasets[0].borderWidth = arcA.map((_,i) => i === cursorIdx ? 2 : 1);
   scatterChart.update('none');
   arcChart.update('none');
 }
 
-function startPlay() {
-  interval = setInterval(tick, 400);
+function applyPayload(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const a = Number(payload.A ?? 0);
+  const r = Number(payload.R ?? 0);
+  const c = Number(payload.C ?? 0);
+  const state = payload.state || 'GRAY';
+
+  pointCounter += 1;
+  const stamp = `${pointCounter * STEP_SECONDS}s`;
+  labels.push(stamp);
+  arcA.push(a);
+  arcR.push(r);
+  arcC.push(c);
+  arcStates.push(state);
+  cursorIdx = arcA.length - 1;
+
+  if (state !== lastState) {
+    transitionLog.push({time: stamp, from: lastState || '—', to: state});
+    lastState = state;
+  }
+
+  enforceWindowLimit();
+  cursorIdx = arcA.length - 1;
+
+  updateFeatures(payload.features || {});
+  updateMetrics(payload);
+  updateOrb(payload);
+  buildTransitionLog();
+  refreshCharts();
 }
+
+const outboundBuffer = { ecg: [], ppg: [], emg: [], sampling_rate: 256 };
+let uplinkTimer = null;
+
+async function sendBufferedSignals() {
+  if (!outboundBuffer.ecg.length && !outboundBuffer.ppg.length && !outboundBuffer.emg.length) return;
+  const body = {
+    session_id: SESSION_ID,
+    sampling_rate: outboundBuffer.sampling_rate,
+    ecg: outboundBuffer.ecg,
+    ppg: outboundBuffer.ppg,
+    emg: outboundBuffer.emg,
+  };
+  outboundBuffer.ecg = [];
+  outboundBuffer.ppg = [];
+  outboundBuffer.emg = [];
+
+  try {
+    await fetch(`${API_BASE}/api/ingest-data`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    console.warn('Signal uplink failed', err);
+  }
+}
+
+window.pushBiosignalSample = function(sample) {
+  if (!sample || typeof sample !== 'object') return;
+  outboundBuffer.sampling_rate = Number(sample.sampling_rate || outboundBuffer.sampling_rate || 256);
+  if (Number.isFinite(sample.ecg)) outboundBuffer.ecg.push(Number(sample.ecg));
+  if (Number.isFinite(sample.ppg)) outboundBuffer.ppg.push(Number(sample.ppg));
+  if (Number.isFinite(sample.emg)) outboundBuffer.emg.push(Number(sample.emg));
+};
+
+window.pushBiosignalChunk = async function(chunk) {
+  if (!chunk || typeof chunk !== 'object') return;
+  try {
+    await fetch(`${API_BASE}/api/ingest-data`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        session_id: SESSION_ID,
+        sampling_rate: Number(chunk.sampling_rate || 256),
+        ecg: Array.isArray(chunk.ecg) ? chunk.ecg : [],
+        ppg: Array.isArray(chunk.ppg) ? chunk.ppg : [],
+        emg: Array.isArray(chunk.emg) ? chunk.emg : []
+      })
+    });
+  } catch (err) {
+    console.warn('Chunk uplink failed', err);
+  }
+};
+
+async function pullLatestProcessedData() {
+  if (!playing) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/process-data?session_id=${encodeURIComponent(SESSION_ID)}`, { method:'GET' });
+    if (!res.ok) return;
+    const payload = await res.json();
+    applyPayload(payload);
+  } catch (err) {
+    console.warn('Pull failed', err);
+  }
+}
+
+function startRealtime() {
+  if (uplinkTimer) clearInterval(uplinkTimer);
+  if (pollTimer) clearInterval(pollTimer);
+  uplinkTimer = setInterval(sendBufferedSignals, STEP_SECONDS * 1000);
+  pollTimer = setInterval(pullLatestProcessedData, STEP_SECONDS * 1000);
+}
+
 function togglePlay() {
   playing = !playing;
   document.getElementById('btn-play').textContent = playing ? '⏸ Pause' : '▶ Play';
-  if(playing) startPlay(); else clearInterval(interval);
+  if (playing) {
+    pullLatestProcessedData();
+  }
 }
+
 function setWindow(w) {
   windowSize = w;
   document.querySelectorAll('.ctrl-btn').forEach(b=>{
     if(['10','30','60'].includes(b.textContent.replace('s',''))) b.classList.remove('active');
   });
   document.getElementById('btn-'+w)?.classList.add('active');
+  enforceWindowLimit();
+  refreshCharts();
 }
+
 function toggleAxis(ax) {
   visAxes[ax] = !visAxes[ax];
   const btn = document.getElementById('btn-'+ax);
@@ -831,12 +879,26 @@ function toggleAxis(ax) {
   arcChart.update();
 }
 
-// ─── Init ───
-buildTransitionLog(0);
-updateFeatures(0);
-updateMetrics(0);
-updateOrb(0);
-startPlay();
+window.connectProcessWebSocket = function() {
+  const wsProto = API_BASE.startsWith('https') ? 'wss' : 'ws';
+  const wsBase = API_BASE.replace(/^https?/, wsProto);
+  const ws = new WebSocket(`${wsBase}/ws/process-data`);
+  ws.onmessage = (evt) => {
+    try {
+      const payload = JSON.parse(evt.data);
+      if (payload && !payload.status) applyPayload(payload);
+    } catch (_) {}
+  };
+  window.arcProcessSocket = ws;
+  return ws;
+};
+
+buildTransitionLog();
+updateFeatures({});
+updateMetrics({A:0,R:0,C:0,state:'GRAY',features:{HR:0,RMSSD:0,LFHF:0}});
+updateOrb({A:0,R:0,C:0,state:'GRAY'});
+startRealtime();
+pullLatestProcessedData();
 </script>
 </body>
 </html>

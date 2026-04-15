@@ -12,3 +12,8 @@
    `python live_monitor.py`
 3. Run CSV analysis:
    `python hrv_analysis.py`
+4. Run real-time API backend for A-R-C dashboard:
+   `uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload`
+5. Open `arc_dashboard.html` and stream samples to:
+   - `POST /api/ingest-data` (chunked raw ECG/PPG/EMG)
+   - `GET /api/process-data?session_id=default` (latest processed output)
