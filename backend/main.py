@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 from collections import deque
 from dataclasses import dataclass, field
@@ -17,6 +18,22 @@ WINDOW_SECONDS = 30
 STEP_SECONDS = 5
 DEFAULT_FS = 256
 SMOOTHING_POINTS = 5
+deprecated_powerline = os.getenv("ARC_POWERLINE_HZ")
+POWERLINE_FREQ_HZ = float(os.getenv("ARC_POWERLINE_FREQ_HZ", deprecated_powerline if deprecated_powerline else "50"))
+NOTCH_Q = float(os.getenv("ARC_NOTCH_Q", "30"))
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ARC_ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+MIN_ENTROPY_BINS = 6
+MAX_ENTROPY_BINS = 12
+
+# ARC scoring constants (empirically tuned defaults, intended for later calibration per cohort/device)
+SD_RATIO_TARGET = 0.5
+SD_RATIO_DECAY = 0.35
+RR_VARIANCE_DECAY = 25000.0
+ENTROPY_BASELINE = 1.5
+
+AROUSAL_WEIGHTS = (0.40, 0.35, 0.25)     # HR, LFHF, LF
+REGULATION_WEIGHTS = (0.45, 0.35, 0.20)  # RMSSD, HF, pNN50
+COHERENCE_WEIGHTS = (0.45, 0.30, 0.25)   # SD ratio, entropy, variance
 
 
 class BiosignalChunk(BaseModel):
@@ -53,10 +70,10 @@ class SessionState:
         self.emg = deque(self.emg, maxlen=maxlen)
 
 
-app = FastAPI(title="Soul Spectrum Real-Time Biosignal API", version="1.0.0")
+app = FastAPI(title="ARC Real-Time Biosignal API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -103,9 +120,9 @@ def preprocess_signal(raw: np.ndarray, fs: float) -> np.ndarray:
         b_band, a_band = signal.butter(4, [low, high], btype="bandpass")
         x = signal.filtfilt(b_band, a_band, x)
 
-    notch_hz = 50.0
+    notch_hz = POWERLINE_FREQ_HZ
     if fs / 2 > notch_hz:
-        b_notch, a_notch = signal.iirnotch(notch_hz / (fs / 2), Q=30)
+        b_notch, a_notch = signal.iirnotch(notch_hz / (fs / 2), Q=NOTCH_Q)
         x = signal.filtfilt(b_notch, a_notch, x)
 
     k = int(fs * 0.75)
@@ -126,7 +143,8 @@ def detect_rpeaks(ecg: np.ndarray, fs: float) -> np.ndarray:
         cleaned = nk.ecg_clean(ecg, sampling_rate=fs, method="neurokit")
         _, rpeaks_info = nk.ecg_peaks(cleaned, sampling_rate=fs, method="neurokit")
         rpeaks = np.array(rpeaks_info.get("ECG_R_Peaks", []), dtype=int)
-    except Exception:
+    except Exception as exc:
+        print(f"[detect_rpeaks] neurokit2 fallback triggered: {exc}")
         prominence = max(np.std(ecg) * 0.35, 1e-6)
         distance = max(int(0.25 * fs), 1)
         rpeaks, _ = signal.find_peaks(ecg, distance=distance, prominence=prominence)
@@ -232,22 +250,30 @@ def arc_from_features(features: Dict[str, float], rr_ms: np.ndarray) -> Dict[str
     norm_pnn50 = clamp(pnn50 / 60.0, 0.0, 1.0)
 
     sd_ratio = (sd1 / sd2) if sd2 > 1e-9 else 0.0
-    sd_ratio_score = float(np.exp(-abs(sd_ratio - 0.5) / 0.35))
+    sd_ratio_score = float(np.exp(-abs(sd_ratio - SD_RATIO_TARGET) / SD_RATIO_DECAY))
 
     rr_var = float(np.var(rr_ms)) if rr_ms.size > 1 else 0.0
-    var_score = float(np.exp(-rr_var / 25000.0))
+    var_score = float(np.exp(-rr_var / RR_VARIANCE_DECAY))
 
     if rr_ms.size > 5:
-        hist, _ = np.histogram(rr_ms, bins=min(12, max(6, int(np.sqrt(rr_ms.size)))), density=True)
+        hist, _ = np.histogram(
+            rr_ms,
+            bins=min(MAX_ENTROPY_BINS, max(MIN_ENTROPY_BINS, int(np.sqrt(rr_ms.size)))),
+            density=True,
+        )
         hist = hist[hist > 0]
         rr_entropy = float(scipy_entropy(hist)) if hist.size else 0.0
     else:
         rr_entropy = 0.0
-    entropy_score = float(np.exp(-max(rr_entropy - 1.5, 0.0)))
+    entropy_score = float(np.exp(-max(rr_entropy - ENTROPY_BASELINE, 0.0)))
 
-    arousal = float(0.40 * norm_hr + 0.35 * norm_lfhf + 0.25 * norm_lf)
-    regulation = float(0.45 * norm_rmssd + 0.35 * norm_hf + 0.20 * norm_pnn50)
-    coherence = float(0.45 * sd_ratio_score + 0.30 * entropy_score + 0.25 * var_score)
+    aw_hr, aw_lfhf, aw_lf = AROUSAL_WEIGHTS
+    rw_rmssd, rw_hf, rw_pnn50 = REGULATION_WEIGHTS
+    cw_ratio, cw_entropy, cw_var = COHERENCE_WEIGHTS
+
+    arousal = float(aw_hr * norm_hr + aw_lfhf * norm_lfhf + aw_lf * norm_lf)
+    regulation = float(rw_rmssd * norm_rmssd + rw_hf * norm_hf + rw_pnn50 * norm_pnn50)
+    coherence = float(cw_ratio * sd_ratio_score + cw_entropy * entropy_score + cw_var * var_score)
 
     return {
         "A": clamp(arousal, 0.0, 1.0),
@@ -314,16 +340,15 @@ def ingest_chunk(chunk: BiosignalChunk) -> Optional[Dict]:
 
         if chunk.ecg:
             state.ecg.extend(float(x) for x in chunk.ecg)
-            state.total_samples += len(chunk.ecg)
-        elif chunk.ppg:
-            state.total_samples += len(chunk.ppg)
-        elif chunk.emg:
-            state.total_samples += len(chunk.emg)
 
         if chunk.ppg:
             state.ppg.extend(float(x) for x in chunk.ppg)
+
         if chunk.emg:
             state.emg.extend(float(x) for x in chunk.emg)
+
+        batch_samples = max(len(chunk.ecg), len(chunk.ppg), len(chunk.emg), 0)
+        state.total_samples += batch_samples
 
         step = int(state.fs * STEP_SECONDS)
         min_samples = int(state.fs * WINDOW_SECONDS)
@@ -362,7 +387,10 @@ def api_process_data(session_id: str = "default") -> Dict:
     state = get_session(session_id)
     with state.lock:
         if state.latest_result is None:
-            raise HTTPException(status_code=404, detail="No processed window yet. Stream at least 30s of data first.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No processed window yet. Stream at least {WINDOW_SECONDS}s of data first.",
+            )
         return state.latest_result
 
 
@@ -376,7 +404,7 @@ async def ws_process_data(websocket: WebSocket):
                 obj = json.loads(raw)
                 chunk = BiosignalChunk(**obj)
             except Exception as exc:
-                await websocket.send_json({"status": "error", "message": f"Invalid payload: {exc}"})
+                await websocket.send_json({"status": "error", "message": f"Invalid payload format: {str(exc)[:160]}"})
                 continue
 
             result = ingest_chunk(chunk)

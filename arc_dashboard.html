@@ -520,9 +520,21 @@ const COLORS = {
   GRAY:   { hex:'#7a7a8a', name:'Gray',   sensation:'Wavering rhythm',            emotions:'Confusion · Transition · Disconnect',hrv:'Irregular HRV',        behavior:'Recalibration before reset' },
 };
 
-const API_BASE = localStorage.getItem('ARC_API_BASE') || 'http://localhost:8000';
+function resolveApiBase() {
+  const fallback = 'http://localhost:8000';
+  const raw = localStorage.getItem('ARC_API_BASE') || fallback;
+  try {
+    const u = new URL(raw);
+    if (!['http:', 'https:'].includes(u.protocol)) return fallback;
+    return u.origin;
+  } catch (_) {
+    return fallback;
+  }
+}
+const API_BASE = resolveApiBase();
 const SESSION_ID = localStorage.getItem('ARC_SESSION_ID') || 'default';
 const STEP_SECONDS = 5;
+const INITIAL_POLL_DELAY_MS = 2000;
 
 // ─── Populate sidebar color states ───
 const csContainer = document.getElementById('color-states');
@@ -551,7 +563,9 @@ let windowSize = 30;
 let visAxes = {A:true, R:true, C:true};
 let playing = true;
 let pollTimer = null;
+let initialPollTimer = null;
 let pointCounter = 0;
+let pollInFlight = false;
 
 const featDefs = [
   {key:'HR',    label:'HR',    unit:'bpm', max:120, color:'#e8403a'},
@@ -666,7 +680,7 @@ function updateFeatures(features) {
     const v = Number(features?.[f.key] ?? 0);
     const el = document.getElementById('fv-'+f.key);
     if(el) {
-      const precision = f.unit==='%' || f.unit==='bpm' ? 1 : 3;
+      const precision = f.unit==='%' || f.unit==='bpm' ? 1 : 2;
       el.textContent = Number.isFinite(v) ? v.toFixed(precision) : '—';
     }
     const box = document.getElementById('feat-'+f.key);
@@ -762,7 +776,6 @@ function applyPayload(payload) {
   arcR.push(r);
   arcC.push(c);
   arcStates.push(state);
-  cursorIdx = arcA.length - 1;
 
   if (state !== lastState) {
     transitionLog.push({time: stamp, from: lastState || '—', to: state});
@@ -806,13 +819,14 @@ async function sendBufferedSignals() {
   }
 }
 
-window.pushBiosignalSample = function(sample) {
+window.bufferBiosignalSample = function(sample) {
   if (!sample || typeof sample !== 'object') return;
   outboundBuffer.sampling_rate = Number(sample.sampling_rate || outboundBuffer.sampling_rate || 256);
   if (Number.isFinite(sample.ecg)) outboundBuffer.ecg.push(Number(sample.ecg));
   if (Number.isFinite(sample.ppg)) outboundBuffer.ppg.push(Number(sample.ppg));
   if (Number.isFinite(sample.emg)) outboundBuffer.emg.push(Number(sample.emg));
 };
+window.pushBiosignalSample = window.bufferBiosignalSample;
 
 window.pushBiosignalChunk = async function(chunk) {
   if (!chunk || typeof chunk !== 'object') return;
@@ -834,7 +848,8 @@ window.pushBiosignalChunk = async function(chunk) {
 };
 
 async function pullLatestProcessedData() {
-  if (!playing) return;
+  if (!playing || pollInFlight) return;
+  pollInFlight = true;
   try {
     const res = await fetch(`${API_BASE}/api/process-data?session_id=${encodeURIComponent(SESSION_ID)}`, { method:'GET' });
     if (!res.ok) return;
@@ -842,13 +857,17 @@ async function pullLatestProcessedData() {
     applyPayload(payload);
   } catch (err) {
     console.warn('Pull failed', err);
+  } finally {
+    pollInFlight = false;
   }
 }
 
 function startRealtime() {
   if (uplinkTimer) clearInterval(uplinkTimer);
   if (pollTimer) clearInterval(pollTimer);
+  if (initialPollTimer) clearTimeout(initialPollTimer);
   uplinkTimer = setInterval(sendBufferedSignals, STEP_SECONDS * 1000);
+  initialPollTimer = setTimeout(() => pullLatestProcessedData(), INITIAL_POLL_DELAY_MS);
   pollTimer = setInterval(pullLatestProcessedData, STEP_SECONDS * 1000);
 }
 
@@ -886,7 +905,7 @@ window.connectProcessWebSocket = function() {
   ws.onmessage = (evt) => {
     try {
       const payload = JSON.parse(evt.data);
-      if (payload && !payload.status) applyPayload(payload);
+      if (payload && payload.status === undefined) applyPayload(payload);
     } catch (_) {}
   };
   window.arcProcessSocket = ws;
