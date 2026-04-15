@@ -3,3 +3,6 @@ pandas
 matplotlib
 scipy
 pyserial
+fastapi
+uvicorn
+neurokit2
