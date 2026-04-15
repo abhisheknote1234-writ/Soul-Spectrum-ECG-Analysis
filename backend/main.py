@@ -18,8 +18,8 @@ WINDOW_SECONDS = 30
 STEP_SECONDS = 5
 DEFAULT_FS = 256
 SMOOTHING_POINTS = 5
-deprecated_powerline = os.getenv("ARC_POWERLINE_HZ")
-POWERLINE_FREQ_HZ = float(os.getenv("ARC_POWERLINE_FREQ_HZ", deprecated_powerline if deprecated_powerline else "50"))
+legacy_powerline_env = os.getenv("ARC_POWERLINE_HZ")
+POWERLINE_FREQ_HZ = float(os.getenv("ARC_POWERLINE_FREQ_HZ", legacy_powerline_env if legacy_powerline_env else "50"))
 NOTCH_Q = float(os.getenv("ARC_NOTCH_Q", "30"))
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ARC_ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 MIN_ENTROPY_BINS = 6
@@ -73,7 +73,7 @@ class SessionState:
 app = FastAPI(title="ARC Real-Time Biosignal API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],
+    allow_origins=ALLOWED_ORIGINS or ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

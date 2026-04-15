@@ -521,7 +521,8 @@ const COLORS = {
 };
 
 function resolveApiBase() {
-  const fallback = 'http://localhost:8000';
+  const fallbackProtocol = window.location.protocol === 'https:' ? 'https' : 'http';
+  const fallback = `${fallbackProtocol}://localhost:8000`;
   const raw = localStorage.getItem('ARC_API_BASE') || fallback;
   try {
     const u = new URL(raw);
@@ -692,11 +693,14 @@ function updateMetrics(payload) {
   const col = payload?.state || 'GRAY';
   const c = COLORS[col] || COLORS.GRAY;
   const f = payload?.features || {};
+  const aVal = Number(payload?.A ?? 0);
+  const rVal = Number(payload?.R ?? 0);
+  const cVal = Number(payload?.C ?? 0);
   const metrics = [
-    {label:'Heart Rate', val:(f.HR ?? 0).toFixed(1), unit:'bpm', delta: payload.A > 0.65 ? 'Sympathetic ↑' : 'Moderate', up:payload.A > 0.65, accent:c.hex},
-    {label:'RMSSD', val:(f.RMSSD ?? 0).toFixed(2), unit:'ms', delta:payload.R > 0.6 ? 'Regulated ↑' : 'Regulation ↓', up:payload.R > 0.6, accent:COLORS.GREEN.hex},
+    {label:'Heart Rate', val:(f.HR ?? 0).toFixed(1), unit:'bpm', delta: aVal > 0.65 ? 'Sympathetic ↑' : 'Moderate', up:aVal > 0.65, accent:c.hex},
+    {label:'RMSSD', val:(f.RMSSD ?? 0).toFixed(2), unit:'ms', delta:rVal > 0.6 ? 'Regulated ↑' : 'Regulation ↓', up:rVal > 0.6, accent:COLORS.GREEN.hex},
     {label:'LF/HF Ratio', val:(f.LFHF ?? 0).toFixed(3), unit:'', delta:(f.LFHF ?? 0) > 2 ? 'Sympathetic++' : 'Parasympathetic+', up:(f.LFHF ?? 0) > 2, accent:COLORS.YELLOW.hex},
-    {label:'Coherence (C)', val:(payload.C ?? 0).toFixed(3), unit:'', delta:payload.C > 0.7 ? 'High coherence' : 'Developing', up:payload.C > 0.7, accent:COLORS.BLUE.hex},
+    {label:'Coherence (C)', val:cVal.toFixed(3), unit:'', delta:cVal > 0.7 ? 'High coherence' : 'Developing', up:cVal > 0.7, accent:COLORS.BLUE.hex},
   ];
   const mb = document.getElementById('metrics-bar');
   mb.innerHTML = metrics.map(m=>`
